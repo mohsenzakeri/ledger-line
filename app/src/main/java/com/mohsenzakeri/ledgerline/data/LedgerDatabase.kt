@@ -76,6 +76,8 @@ interface LedgerDao {
     fun observePurchases(): Flow<List<PurchaseEntity>>
     @Query("SELECT * FROM expense_entries WHERE purchaseId = :purchaseId ORDER BY id")
     fun observeEntries(purchaseId: Long): Flow<List<ExpenseEntryEntity>>
+    @Query("SELECT * FROM expense_entries ORDER BY id DESC")
+    fun observeAllEntries(): Flow<List<ExpenseEntryEntity>>
     @Query("SELECT COALESCE(SUM(amount), 0) FROM expense_entries")
     fun observeTotalSpent(): Flow<Double>
 }
