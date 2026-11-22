@@ -177,6 +177,22 @@ private fun LedgerLineApp(dao: LedgerDao) {
         }
     }
 
+    if (showDatePicker) {
+        val initialDate = runCatching { LocalDate.parse(date) }.getOrDefault(LocalDate.now())
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = { TextButton(onClick = {
+                pickerState.selectedDateMillis?.let {
+                    date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()
+                }
+                showDatePicker = false
+            }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) { DatePicker(state = pickerState) }
+    }
     if (deleteId != null) AlertDialog(
         onDismissRequest = { deleteId = null },
         title = { Text("Delete purchase?") },
