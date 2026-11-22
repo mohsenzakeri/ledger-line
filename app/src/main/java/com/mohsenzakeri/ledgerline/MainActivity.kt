@@ -24,6 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import java.time.ZoneOffset
+import java.time.Instant
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,21 +56,22 @@ private fun CategoryDropdown(
     onAdd: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
     var newCategory by remember { mutableStateOf("") }
 
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { next -> expanded = next; if (next) query = "" }) {
         OutlinedTextField(
-            value = value,
-            onValueChange = {},
-            readOnly = true,
+            value = if (expanded) query else value,
+            onValueChange = { query = it; expanded = true },
+            placeholder = { Text("Search " + label) },
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
             modifier = Modifier.fillMaxWidth().menuAnchor()
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false })
+            options.filter { it.contains(query, ignoreCase = true) }.forEach { option ->
+                DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false; query = "" })
             }
             HorizontalDivider()
             DropdownMenuItem(text = { Text("+ Add new…") }, onClick = {
@@ -116,6 +120,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
     var period by remember { mutableStateOf("Month") }
     var historyCategory by remember { mutableStateOf("All") }
     var date by remember { mutableStateOf(LocalDate.now().toString()) }
+    var showDatePicker by remember { mutableStateOf(false) }
     var retailer by remember { mutableStateOf("") }
     var receiptTotal by remember { mutableStateOf("") }
     var lines by remember { mutableStateOf(listOf(DraftLine())) }
@@ -406,7 +411,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                 ) {
                     item { Text(if (editingId == null) "New purchase" else "Edit purchase", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
                     item {
-                        OutlinedTextField(value = date, onValueChange = { date = it }, label = { Text("Date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Date: " + date + " · Choose from calendar") }
                         OutlinedTextField(value = retailer, onValueChange = { retailer = it }, label = { Text("Retailer") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                         val retailerSuggestions = purchases.map { it.retailer.trim() }.filter { it.isNotBlank() && it.contains(retailer, ignoreCase = true) && it != retailer }.distinct().take(4)
                         if (retailer.isNotBlank() && retailerSuggestions.isNotEmpty()) {
@@ -463,7 +468,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                         }
                                     }
                                 }
-                                OutlinedTextField(value = lines[index].details, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(details = v) } }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                                OutlinedTextField(value = lines[index].details, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(details = v.replaceFirstChar { ch -> ch.titlecase() }) } }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), minLines = 2)
                                 OutlinedTextField(value = lines[index].notes, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(notes = v) } }, label = { Text("More information") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                                 if (lines.size > 1) TextButton(onClick = { lines = lines.toMutableList().also { it.removeAt(index) } }) { Text("Remove this line") }
                             }
