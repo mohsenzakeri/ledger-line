@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mohsenzakeri.ledgerline.data.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
@@ -120,16 +122,21 @@ private fun LedgerLineApp(dao: LedgerDao) {
     val importCsv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
-                val rows = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { LedgerCsv.readRows(it) }
-                rows.forEach { row ->
-                    val amount = row.getValue("Amount").toDouble()
-                    require(amount > 0) { "Invalid amount" }
-                    val id = dao.insertPurchase(PurchaseEntity(date = row.getValue("Date"), retailer = row.getValue("Retailer"), receiptTotal = amount))
-                    dao.insertEntries(listOf(ExpenseEntryEntity(purchaseId = id, amount = amount, category = row.getValue("Category"),
-                        secondaryCategory = row.getValue("Secondary-Category"), necessity = row.getValue("Necessity").toIntOrNull(),
-                        details = row.getValue("Details"), moreInformation = row.getValue("More Information"), legacyPerson = row.getValue("Person"))))
+                val parsed = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)!!.bufferedReader().use { LedgerCsv.readRows(it) }
                 }
-                message = "Imported ${rows.size} rows"
+                val validated = parsed.mapIndexed { index, row ->
+                    val amount = row.getValue("Amount").trim().replace(",", "").toDoubleOrNull()
+                        ?: error("Invalid amount on CSV row " + (index + 2))
+                    require(amount > 0 && amount.isFinite()) { "Invalid amount on CSV row " + (index + 2) }
+                    require(row.getValue("Date").isNotBlank()) { "Missing date on CSV row " + (index + 2) }
+                    require(row.getValue("Category").isNotBlank()) { "Missing category on CSV row " + (index + 2) }
+                    val necessityText = row.getValue("Necessity").trim()
+                    require(necessityText.isBlank() || necessityText.toIntOrNull() in 1..5) { "Invalid necessity on CSV row " + (index + 2) }
+                    row to amount
+                }
+                withContext(Dispatchers.IO) { dao.importCsvRows(validated) }
+                message = "Imported " + validated.size + " rows"
             } catch (e: Exception) { message = "Import failed: ${e.message}" }
         }
     }
