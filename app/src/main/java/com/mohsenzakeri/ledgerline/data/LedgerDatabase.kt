@@ -45,6 +45,18 @@ interface LedgerDao {
     suspend fun getPurchase(id: Long): PurchaseEntity?
     @Query("SELECT * FROM expense_entries WHERE purchaseId = :purchaseId ORDER BY id")
     suspend fun getEntries(purchaseId: Long): List<ExpenseEntryEntity>
+    @Transaction
+    suspend fun importCsvRows(rows: List<Pair<Map<String, String>, Double>>) {
+        rows.forEach { (row, amount) ->
+            val id = insertPurchase(PurchaseEntity(date = row.getValue("Date").trim(),
+                retailer = row.getValue("Retailer"), receiptTotal = amount))
+            insertEntries(listOf(ExpenseEntryEntity(purchaseId = id, amount = amount,
+                category = row.getValue("Category"), secondaryCategory = row.getValue("Secondary-Category"),
+                necessity = row.getValue("Necessity").trim().toIntOrNull(),
+                details = row.getValue("Details"), moreInformation = row.getValue("More Information"),
+                legacyPerson = row.getValue("Person"))))
+        }
+    }
     @Query("SELECT * FROM purchases ORDER BY date DESC, id DESC")
     suspend fun getAllPurchases(): List<PurchaseEntity>
     @Query("DELETE FROM expense_entries WHERE purchaseId = :purchaseId")
