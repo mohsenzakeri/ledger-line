@@ -401,6 +401,13 @@ private fun LedgerLineApp(dao: LedgerDao) {
                     item {
                         OutlinedTextField(value = date, onValueChange = { date = it }, label = { Text("Date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                         OutlinedTextField(value = retailer, onValueChange = { retailer = it }, label = { Text("Retailer") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        val retailerSuggestions = purchases.map { it.retailer.trim() }.filter { it.isNotBlank() && it.contains(retailer, ignoreCase = true) && it != retailer }.distinct().take(4)
+                        if (retailer.isNotBlank() && retailerSuggestions.isNotEmpty()) {
+                            Text("Previously used retailers", style = MaterialTheme.typography.labelSmall)
+                            retailerSuggestions.forEach { suggestion ->
+                                TextButton(onClick = { retailer = suggestion }) { Text(suggestion) }
+                            }
+                        }
                         OutlinedTextField(value = receiptTotal, onValueChange = { receiptTotal = it }, label = { Text("Receipt total (optional)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
                     }
                     items(lines.size) { index ->
