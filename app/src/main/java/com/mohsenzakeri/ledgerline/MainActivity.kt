@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mohsenzakeri.ledgerline.data.*
@@ -28,6 +29,60 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val dao = LedgerDatabase.get(this).ledgerDao()
         setContent { LedgerLineApp(dao) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryDropdown(
+    label: String,
+    value: String,
+    options: List<String>,
+    onSelect: (String) -> Unit,
+    onAdd: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var newCategory by remember { mutableStateOf("") }
+
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor()
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false })
+            }
+            HorizontalDivider()
+            DropdownMenuItem(text = { Text("+ Add new…") }, onClick = {
+                expanded = false
+                newCategory = ""
+                showAddDialog = true
+            })
+        }
+    }
+
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            title = { Text("Add $label") },
+            text = {
+                OutlinedTextField(value = newCategory, onValueChange = { newCategory = it }, label = { Text("Name") }, singleLine = true)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val cleaned = newCategory.trim()
+                    if (cleaned.isNotEmpty()) onAdd(cleaned)
+                    showAddDialog = false
+                }) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showAddDialog = false }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -50,6 +105,11 @@ private fun LedgerLineApp(dao: LedgerDao) {
     var lines by remember { mutableStateOf(listOf(DraftLine())) }
     var message by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("ledgerline_preferences", android.content.Context.MODE_PRIVATE) }
+    val defaultCategories = listOf("bills", "administration", "groceries", "food", "health", "snacks", "transportation", "entertainment", "home", "clothes", "vacation", "decoration", "wedding", "beauty", "socializing")
+    var categories by remember { mutableStateOf(preferences.getString("categories", defaultCategories.joinToString("\n"))!!.lines().filter { it.isNotBlank() }) }
+    var secondaryCategories by remember { mutableStateOf(preferences.getString("secondary_categories", "food\ndecoration\nsubscription\nsocializing\ntransportation")!!.lines().filter { it.isNotBlank() }) }
     val purchases by dao.observePurchases().collectAsStateWithLifecycle(emptyList())
     val total by dao.observeTotalSpent().collectAsStateWithLifecycle(0.0)
 
@@ -135,8 +195,20 @@ private fun LedgerLineApp(dao: LedgerDao) {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Expense line ${index + 1}", fontWeight = FontWeight.SemiBold)
                                 OutlinedTextField(value = lines[index].amount, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(amount = v) } }, label = { Text("Amount") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
-                                OutlinedTextField(value = lines[index].category, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(category = v) } }, label = { Text("Category (customizable)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                                OutlinedTextField(value = lines[index].secondary, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(secondary = v) } }, label = { Text("Secondary category") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                                CategoryDropdown(
+                                    label = "Category",
+                                    value = lines[index].category,
+                                    options = categories,
+                                    onSelect = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(category = v) } },
+                                    onAdd = { v -> categories = (categories + v).distinct(); preferences.edit().putString("categories", categories.joinToString("\n")).apply(); lines = lines.toMutableList().also { it[index] = it[index].copy(category = v) } }
+                                )
+                                CategoryDropdown(
+                                    label = "Secondary category",
+                                    value = lines[index].secondary,
+                                    options = secondaryCategories,
+                                    onSelect = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(secondary = v) } },
+                                    onAdd = { v -> secondaryCategories = (secondaryCategories + v).distinct(); preferences.edit().putString("secondary_categories", secondaryCategories.joinToString("\n")).apply(); lines = lines.toMutableList().also { it[index] = it[index].copy(secondary = v) } }
+                                )
                                 OutlinedTextField(value = lines[index].necessity.toString(), onValueChange = { v -> v.toIntOrNull()?.let { n -> if (n in 1..5) lines = lines.toMutableList().also { it[index] = it[index].copy(necessity = n) } } }, label = { Text("Necessity (1–5)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                                 OutlinedTextField(value = lines[index].details, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(details = v) } }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                                 OutlinedTextField(value = lines[index].notes, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(notes = v) } }, label = { Text("More information") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
