@@ -101,6 +101,8 @@ private data class DraftLine(
 @Composable
 private fun LedgerLineApp(dao: LedgerDao) {
     var screen by remember { mutableStateOf("home") }
+    var editingId by remember { mutableStateOf<Long?>(null) }
+    var deleteId by remember { mutableStateOf<Long?>(null) }
     var date by remember { mutableStateOf(LocalDate.now().toString()) }
     var retailer by remember { mutableStateOf("") }
     var receiptTotal by remember { mutableStateOf("") }
@@ -146,6 +148,17 @@ private fun LedgerLineApp(dao: LedgerDao) {
         }
     }
 
+    if (deleteId != null) AlertDialog(
+        onDismissRequest = { deleteId = null },
+        title = { Text("Delete purchase?") },
+        text = { Text("All expense lines in this purchase will be deleted.") },
+        confirmButton = { TextButton(onClick = {
+            val id = deleteId!!
+            deleteId = null
+            scope.launch { dao.deletePurchase(id); message = "Purchase deleted" }
+        }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Cancel") } }
+    )
     MaterialTheme(colorScheme = lightColorScheme(
         primary = androidx.compose.ui.graphics.Color(0xFF176B5B),
         secondary = androidx.compose.ui.graphics.Color(0xFF64877E),
@@ -163,7 +176,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                 )
             },
             floatingActionButton = {
-                FloatingActionButton(onClick = { screen = "add" }) {
+                FloatingActionButton(onClick = { editingId = null; date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); screen = "add" }) {
                     Icon(Icons.Default.Add, contentDescription = "Add purchase")
                 }
             },
@@ -223,6 +236,21 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     Text(purchase.retailer.ifBlank { "Purchase" }, fontWeight = FontWeight.SemiBold)
                                     Text(purchase.date, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (purchase.receiptTotal != null) Text("$" + "%.2f".format(purchase.receiptTotal), style = MaterialTheme.typography.titleMedium)
+                                    Row {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                val entries = dao.getEntries(purchase.id)
+                                                editingId = purchase.id
+                                                date = purchase.date
+                                                retailer = purchase.retailer
+                                                receiptTotal = purchase.receiptTotal?.toString() ?: ""
+                                                lines = entries.map { DraftLine(it.amount.toString(), it.category, it.secondaryCategory,
+                                                    it.necessity ?: 3, it.details, it.moreInformation) }.ifEmpty { listOf(DraftLine()) }
+                                                screen = "add"
+                                            }
+                                        }) { Text("Edit") }
+                                        TextButton(onClick = { deleteId = purchase.id }) { Text("Delete") }
+                                    }
                                 }
                             }
                         }
@@ -233,7 +261,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                     modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item { Text("New purchase", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
+                    item { Text(if (editingId == null) "New purchase" else "Edit purchase", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
                     item {
                         OutlinedTextField(value = date, onValueChange = { date = it }, label = { Text("Date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                         OutlinedTextField(value = retailer, onValueChange = { retailer = it }, label = { Text("Retailer") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -282,14 +310,18 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     message = "Enter a date, a positive amount, and a category for every line."
                                 } else {
                                     scope.launch {
-                                        val id = dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptTotal.toDoubleOrNull() ?: lineTotal))
-                                        dao.insertEntries(lines.map { ExpenseEntryEntity(purchaseId = id, amount = it.amount.toDouble(), category = it.category.trim(), secondaryCategory = it.secondary.trim(), necessity = it.necessity, details = it.details, moreInformation = it.notes) })
+                                        val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptTotal.toDoubleOrNull() ?: lineTotal))
+                                        val prior = if (editingId != null) dao.getEntries(id) else emptyList()
+                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = line.amount.toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
+                                        if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptTotal.toDoubleOrNull() ?: lineTotal), entries)
+                                        else dao.insertEntries(entries)
+                                        editingId = null
                                         date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); message = "Purchase saved."; screen = "home"
                                     }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Save purchase") }
+                        ) { Text(if (editingId == null) "Save purchase" else "Save changes") }
                         if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.primary)
                     }
                 }
