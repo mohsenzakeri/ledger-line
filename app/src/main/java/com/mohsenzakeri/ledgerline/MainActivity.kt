@@ -2,6 +2,8 @@ package com.mohsenzakeri.ledgerline
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -112,6 +114,37 @@ private fun LedgerLineApp(dao: LedgerDao) {
     var secondaryCategories by remember { mutableStateOf(preferences.getString("secondary_categories", "food\ndecoration\nsubscription\nsocializing\ntransportation")!!.lines().filter { it.isNotBlank() }) }
     val purchases by dao.observePurchases().collectAsStateWithLifecycle(emptyList())
     val total by dao.observeTotalSpent().collectAsStateWithLifecycle(0.0)
+    val categoryTotals by dao.observeCategoryTotals().collectAsStateWithLifecycle(emptyList())
+    val importCsv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val rows = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { LedgerCsv.readRows(it) }
+                rows.forEach { row ->
+                    val amount = row.getValue("Amount").toDouble()
+                    require(amount > 0) { "Invalid amount" }
+                    val id = dao.insertPurchase(PurchaseEntity(date = row.getValue("Date"), retailer = row.getValue("Retailer"), receiptTotal = amount))
+                    dao.insertEntries(listOf(ExpenseEntryEntity(purchaseId = id, amount = amount, category = row.getValue("Category"),
+                        secondaryCategory = row.getValue("Secondary-Category"), necessity = row.getValue("Necessity").toIntOrNull(),
+                        details = row.getValue("Details"), moreInformation = row.getValue("More Information"), legacyPerson = row.getValue("Person"))))
+                }
+                message = "Imported ${rows.size} rows"
+            } catch (e: Exception) { message = "Import failed: ${e.message}" }
+        }
+    }
+    val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val byId = dao.getAllPurchases().associateBy { it.id }
+                val rows = dao.getAllEntries().mapNotNull { e ->
+                    val p = byId[e.purchaseId] ?: return@mapNotNull null
+                    listOf(p.date, e.amount.toString(), e.legacyPerson, e.category, e.secondaryCategory,
+                        e.necessity?.toString() ?: "", p.retailer, e.details, e.moreInformation)
+                }
+                context.contentResolver.openOutputStream(uri)!!.bufferedWriter().use { it.write(LedgerCsv.encode(rows)) }
+                message = "CSV exported"
+            } catch (e: Exception) { message = "Export failed: ${e.message}" }
+        }
+    }
 
     MaterialTheme(colorScheme = lightColorScheme(
         primary = androidx.compose.ui.graphics.Color(0xFF176B5B),
@@ -152,6 +185,22 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                 Text("All-time recorded spending", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .8f))
                                 Text("$" + "%,.2f".format(total), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                                 Text("${purchases.size} purchases recorded", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .8f))
+                            }
+                        }
+                    }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { importCsv.launch(arrayOf("text/*", "application/csv")) }) { Text("Import CSV") }
+                            OutlinedButton(onClick = { exportCsv.launch("ledgerline.csv") }) { Text("Export CSV") }
+                        }
+                        if (message.isNotBlank()) Text(message)
+                    }
+                    if (categoryTotals.isNotEmpty()) {
+                        item { Text("Spending by category", style = MaterialTheme.typography.titleLarge) }
+                        items(categoryTotals) { entry ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(entry.category)
+                                Text("$" + "%.2f".format(entry.total))
                             }
                         }
                     }
