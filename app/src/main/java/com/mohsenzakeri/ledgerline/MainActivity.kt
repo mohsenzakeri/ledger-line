@@ -32,6 +32,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,6 +130,11 @@ private fun LedgerLineApp(dao: LedgerDao) {
     val total by dao.observeTotalSpent().collectAsStateWithLifecycle(0.0)
     val categoryTotals by dao.observeCategoryTotals().collectAsStateWithLifecycle(emptyList())
     val allEntries by dao.observeAllEntries().collectAsStateWithLifecycle(emptyList())
+    val receiptAmount = AmountMath.evaluate(receiptTotal)
+    val computedLastAmount = if (receiptAmount != null && lines.isNotEmpty()) {
+        val earlier = lines.dropLast(1).map { AmountMath.evaluate(it.amount) }
+        if (earlier.all { it != null }) receiptAmount.subtract(earlier.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add)).setScale(2, RoundingMode.HALF_UP) else null
+    } else null
     val spendingByPurchase = remember(allEntries) { allEntries.groupBy { it.purchaseId }.mapValues { (_, entries) -> entries.sumOf { it.amount } } }
     val importCsv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
@@ -408,13 +415,25 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                 TextButton(onClick = { retailer = suggestion }) { Text(suggestion) }
                             }
                         }
-                        OutlinedTextField(value = receiptTotal, onValueChange = { receiptTotal = it }, label = { Text("Receipt total (optional)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                        OutlinedTextField(value = receiptTotal, onValueChange = { receiptTotal = it }, label = { Text("Receipt total (required)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
+                        if (receiptTotal.isNotBlank()) Text("Total: " + (receiptAmount?.let { "$" + AmountMath.display(it) } ?: "Invalid expression"))
                     }
                     items(lines.size) { index ->
                         Card {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Expense line ${index + 1}", fontWeight = FontWeight.SemiBold)
-                                OutlinedTextField(value = lines[index].amount, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(amount = v) } }, label = { Text("Amount") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                                val isRemainder = index == lines.lastIndex
+                                val amountText = if (isRemainder) computedLastAmount?.let { AmountMath.display(it) } ?: "" else lines[index].amount
+                                OutlinedTextField(value = amountText, onValueChange = { v ->
+                                    if (!isRemainder) lines = lines.toMutableList().also { it[index] = it[index].copy(amount = v) }
+                                }, readOnly = isRemainder,
+                                    label = { Text(if (isRemainder) "Amount (automatic remainder)" else "Amount or formula") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
+                                if (!isRemainder && lines[index].amount.isNotBlank()) {
+                                    Text("Calculated: " + (AmountMath.evaluate(lines[index].amount)?.let { "$" + AmountMath.display(it) } ?: "Invalid expression"),
+                                        style = MaterialTheme.typography.labelMedium)
+                                }
                                 CategoryDropdown(
                                     label = "Category",
                                     value = lines[index].category,
@@ -429,7 +448,21 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     onSelect = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(secondary = v) } },
                                     onAdd = { v -> secondaryCategories = (secondaryCategories + v).distinct(); preferences.edit().putString("secondary_categories", secondaryCategories.joinToString("\n")).apply(); lines = lines.toMutableList().also { it[index] = it[index].copy(secondary = v) } }
                                 )
-                                OutlinedTextField(value = lines[index].necessity.toString(), onValueChange = { v -> v.toIntOrNull()?.let { n -> if (n in 1..5) lines = lines.toMutableList().also { it[index] = it[index].copy(necessity = n) } } }, label = { Text("Necessity (1–5)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                                var necessityExpanded by remember { mutableStateOf(false) }
+                                ExposedDropdownMenuBox(expanded = necessityExpanded, onExpandedChange = { necessityExpanded = !necessityExpanded }) {
+                                    OutlinedTextField(value = lines[index].necessity.toString(), onValueChange = {}, readOnly = true,
+                                        label = { Text("Necessity (1–5)") },
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(necessityExpanded) },
+                                        modifier = Modifier.fillMaxWidth().menuAnchor())
+                                    ExposedDropdownMenu(expanded = necessityExpanded, onDismissRequest = { necessityExpanded = false }) {
+                                        (1..5).forEach { n ->
+                                            DropdownMenuItem(text = { Text(n.toString()) }, onClick = {
+                                                lines = lines.toMutableList().also { it[index] = it[index].copy(necessity = n) }
+                                                necessityExpanded = false
+                                            })
+                                        }
+                                    }
+                                }
                                 OutlinedTextField(value = lines[index].details, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(details = v) } }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                                 OutlinedTextField(value = lines[index].notes, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(notes = v) } }, label = { Text("More information") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                                 if (lines.size > 1) TextButton(onClick = { lines = lines.toMutableList().also { it.removeAt(index) } }) { Text("Remove this line") }
@@ -444,19 +477,28 @@ private fun LedgerLineApp(dao: LedgerDao) {
                         }
                     }
                     item {
-                        val lineTotal = lines.sumOf { it.amount.toDoubleOrNull() ?: 0.0 }
-                        Text("Expense lines total: $" + "%.2f".format(lineTotal), fontWeight = FontWeight.SemiBold)
+                        val lineAmounts = lines.dropLast(1).map { AmountMath.evaluate(it.amount) }
+                        val allValid = receiptAmount != null && receiptAmount > BigDecimal.ZERO &&
+                            lineAmounts.all { it != null && it > BigDecimal.ZERO } &&
+                            computedLastAmount != null && computedLastAmount > BigDecimal.ZERO
+                        val lineTotal = if (allValid) receiptAmount!! else BigDecimal.ZERO
+                        Text("Expense lines total: $" + AmountMath.display(lineTotal), fontWeight = FontWeight.SemiBold)
+                        Text("The final expense line is calculated from the receipt total minus the other lines.",
+                            style = MaterialTheme.typography.bodySmall)
+                        if (computedLastAmount != null && computedLastAmount <= BigDecimal.ZERO) {
+                            Text("The remaining amount must be greater than zero.", color = MaterialTheme.colorScheme.error)
+                        }
                         Button(
                             onClick = {
-                                val valid = date.isNotBlank() && lines.isNotEmpty() && lines.all { (it.amount.toDoubleOrNull() ?: 0.0) > 0 && it.category.isNotBlank() }
+                                val valid = date.isNotBlank() && allValid && lines.all { it.category.isNotBlank() }
                                 if (!valid) {
-                                    message = "Enter a date, a positive amount, and a category for every line."
+                                    message = "Enter a date, valid receipt total, positive amounts, and a category for every line."
                                 } else {
                                     scope.launch {
-                                        val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptTotal.toDoubleOrNull() ?: lineTotal))
+                                        val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()))
                                         val prior = if (editingId != null) dao.getEntries(id) else emptyList()
-                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = line.amount.toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
-                                        if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptTotal.toDoubleOrNull() ?: lineTotal), entries)
+                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == lines.lastIndex) computedLastAmount!! else lineAmounts[index]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
+                                        if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()), entries)
                                         else dao.insertEntries(entries)
                                         editingId = null
                                         date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); message = "Purchase saved."; screen = "home"
