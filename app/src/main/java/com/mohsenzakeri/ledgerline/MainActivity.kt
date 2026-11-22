@@ -131,8 +131,8 @@ private fun LedgerLineApp(dao: LedgerDao) {
     val categoryTotals by dao.observeCategoryTotals().collectAsStateWithLifecycle(emptyList())
     val allEntries by dao.observeAllEntries().collectAsStateWithLifecycle(emptyList())
     val receiptAmount = AmountMath.evaluate(receiptTotal)
-    val computedLastAmount = if (receiptAmount != null && lines.isNotEmpty()) {
-        val earlier = lines.dropLast(1).map { AmountMath.evaluate(it.amount) }
+    val computedFirstAmount = if (receiptAmount != null && lines.isNotEmpty()) {
+        val earlier = lines.drop(1).map { AmountMath.evaluate(it.amount) }
         if (earlier.all { it != null }) receiptAmount.subtract(earlier.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add)).setScale(2, RoundingMode.HALF_UP) else null
     } else null
     val spendingByPurchase = remember(allEntries) { allEntries.groupBy { it.purchaseId }.mapValues { (_, entries) -> entries.sumOf { it.amount } } }
@@ -422,8 +422,8 @@ private fun LedgerLineApp(dao: LedgerDao) {
                         Card {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Expense line ${index + 1}", fontWeight = FontWeight.SemiBold)
-                                val isRemainder = index == lines.lastIndex
-                                val amountText = if (isRemainder) computedLastAmount?.let { AmountMath.display(it) } ?: "" else lines[index].amount
+                                val isRemainder = index == 0
+                                val amountText = if (isRemainder) computedFirstAmount?.let { AmountMath.display(it) } ?: "" else lines[index].amount
                                 OutlinedTextField(value = amountText, onValueChange = { v ->
                                     if (!isRemainder) lines = lines.toMutableList().also { it[index] = it[index].copy(amount = v) }
                                 }, readOnly = isRemainder,
@@ -480,12 +480,12 @@ private fun LedgerLineApp(dao: LedgerDao) {
                         val lineAmounts = lines.dropLast(1).map { AmountMath.evaluate(it.amount) }
                         val allValid = receiptAmount != null && receiptAmount > BigDecimal.ZERO &&
                             lineAmounts.all { it != null && it > BigDecimal.ZERO } &&
-                            computedLastAmount != null && computedLastAmount > BigDecimal.ZERO
+                            computedFirstAmount != null && computedFirstAmount > BigDecimal.ZERO
                         val lineTotal = if (allValid) receiptAmount!! else BigDecimal.ZERO
                         Text("Expense lines total: $" + AmountMath.display(lineTotal), fontWeight = FontWeight.SemiBold)
-                        Text("The final expense line is calculated from the receipt total minus the other lines.",
+                        Text("The first expense line is calculated from the receipt total minus the other lines.",
                             style = MaterialTheme.typography.bodySmall)
-                        if (computedLastAmount != null && computedLastAmount <= BigDecimal.ZERO) {
+                        if (computedFirstAmount != null && computedFirstAmount <= BigDecimal.ZERO) {
                             Text("The remaining amount must be greater than zero.", color = MaterialTheme.colorScheme.error)
                         }
                         Button(
@@ -497,7 +497,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     scope.launch {
                                         val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()))
                                         val prior = if (editingId != null) dao.getEntries(id) else emptyList()
-                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == lines.lastIndex) computedLastAmount!! else lineAmounts[index]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
+                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == 0) computedFirstAmount!! else lineAmounts[index - 1]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
                                         if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()), entries)
                                         else dao.insertEntries(entries)
                                         editingId = null
