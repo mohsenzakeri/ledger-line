@@ -5,6 +5,8 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.Delete
+import androidx.room.Transaction
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
@@ -33,10 +35,31 @@ data class ExpenseEntryEntity(
     val legacyPerson: String = ""
 )
 
+data class CategoryTotal(val category: String, val total: Double)
+
 @Dao
 interface LedgerDao {
     @Insert suspend fun insertPurchase(purchase: PurchaseEntity): Long
     @Insert suspend fun insertEntries(entries: List<ExpenseEntryEntity>)
+    @Query("SELECT * FROM purchases WHERE id = :id LIMIT 1")
+    suspend fun getPurchase(id: Long): PurchaseEntity?
+    @Query("SELECT * FROM expense_entries WHERE purchaseId = :purchaseId ORDER BY id")
+    suspend fun getEntries(purchaseId: Long): List<ExpenseEntryEntity>
+    @Query("SELECT * FROM purchases ORDER BY date DESC, id DESC")
+    suspend fun getAllPurchases(): List<PurchaseEntity>
+    @Query("DELETE FROM expense_entries WHERE purchaseId = :purchaseId")
+    suspend fun deleteEntries(purchaseId: Long)
+    @Query("DELETE FROM purchases WHERE id = :id")
+    suspend fun deletePurchaseRow(id: Long)
+    @Transaction suspend fun deletePurchase(id: Long) { deleteEntries(id); deletePurchaseRow(id) }
+    @Transaction suspend fun replacePurchase(purchase: PurchaseEntity, entries: List<ExpenseEntryEntity>) {
+        updatePurchase(purchase); deleteEntries(purchase.id); insertEntries(entries)
+    }
+    @androidx.room.Update suspend fun updatePurchase(purchase: PurchaseEntity)
+    @Query("SELECT * FROM expense_entries ORDER BY id")
+    suspend fun getAllEntries(): List<ExpenseEntryEntity>
+    @Query("SELECT category, SUM(amount) AS total FROM expense_entries GROUP BY category ORDER BY total DESC")
+    fun observeCategoryTotals(): Flow<List<CategoryTotal>>
     @Query("SELECT * FROM purchases ORDER BY date DESC, id DESC")
     fun observePurchases(): Flow<List<PurchaseEntity>>
     @Query("SELECT * FROM expense_entries WHERE purchaseId = :purchaseId ORDER BY id")
