@@ -477,7 +477,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                         }
                     }
                     item {
-                        val lineAmounts = lines.dropLast(1).map { AmountMath.evaluate(it.amount) }
+                        val lineAmounts = lines.drop(1).map { AmountMath.evaluate(it.amount) }
                         val allValid = receiptAmount != null && receiptAmount > BigDecimal.ZERO &&
                             lineAmounts.all { it != null && it > BigDecimal.ZERO } &&
                             computedFirstAmount != null && computedFirstAmount > BigDecimal.ZERO
@@ -492,9 +492,10 @@ private fun LedgerLineApp(dao: LedgerDao) {
                             onClick = {
                                 val valid = date.isNotBlank() && allValid && lines.all { it.category.isNotBlank() }
                                 if (!valid) {
-                                    message = "Enter a date, valid receipt total, positive amounts, and a category for every line."
+                                    message = "Check receipt total, all categories, and amounts on lines 2 onward. The first line is automatic."
                                 } else {
                                     scope.launch {
+                                      try {
                                         val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()))
                                         val prior = if (editingId != null) dao.getEntries(id) else emptyList()
                                         val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == 0) computedFirstAmount!! else lineAmounts[index - 1]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
@@ -502,6 +503,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                         else dao.insertEntries(entries)
                                         editingId = null
                                         date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); message = "Purchase saved."; screen = "home"
+                                      } catch (e: Exception) { message = "Save failed: " + (e.message ?: "Unknown error") }
                                     }
                                 }
                             },
