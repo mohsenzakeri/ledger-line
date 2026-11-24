@@ -18,7 +18,8 @@ data class PurchaseEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val date: String,
     val retailer: String,
-    val receiptTotal: Double? = null
+    val receiptTotal: Double? = null,
+    val receiptPhoto: String? = null
 )
 
 @Entity(tableName = "expense_entries")
@@ -83,7 +84,7 @@ interface LedgerDao {
     fun observeTotalSpent(): Flow<Double>
 }
 
-@Database(entities = [PurchaseEntity::class, ExpenseEntryEntity::class], version = 2, exportSchema = false)
+@Database(entities = [PurchaseEntity::class, ExpenseEntryEntity::class], version = 3, exportSchema = false)
 abstract class LedgerDatabase : RoomDatabase() {
     abstract fun ledgerDao(): LedgerDao
 
@@ -97,6 +98,10 @@ abstract class LedgerDatabase : RoomDatabase() {
             ).addMigrations(object : androidx.room.migration.Migration(1, 2) {
                 override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     db.execSQL("ALTER TABLE expense_entries ADD COLUMN paymentMethod TEXT NOT NULL DEFAULT ''")
+                }
+            }, object : androidx.room.migration.Migration(2, 3) {
+                override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE purchases ADD COLUMN receiptPhoto TEXT")
                 }
             }).build().also { INSTANCE = it }
         }
