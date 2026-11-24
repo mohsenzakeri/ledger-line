@@ -277,6 +277,12 @@ private fun LedgerLineApp(dao: LedgerDao) {
             }
         ) { padding ->
             if (screen == "home") {
+                val currentMonth = YearMonth.now()
+                val monthPurchases = purchases.filter { runCatching { YearMonth.from(LocalDate.parse(it.date)) }.getOrNull() == currentMonth }
+                val monthIds = monthPurchases.map { it.id }.toSet()
+                val monthEntries = allEntries.filter { it.purchaseId in monthIds }
+                val monthTotal = monthEntries.sumOf { it.amount }
+                val monthCategories = monthEntries.groupBy { it.category }.map { (category, entries) -> CategoryTotal(category, entries.sumOf { it.amount }) }.sortedByDescending { it.total }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -284,9 +290,9 @@ private fun LedgerLineApp(dao: LedgerDao) {
                     item {
                         Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)) {
                             Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                                Text("All-time recorded spending", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .8f))
-                                Text("$" + "%,.2f".format(total), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-                                Text("${purchases.size} purchases recorded", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .8f))
+                                Text(currentMonth.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")) + " spending", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .8f))
+                                Text("$" + "%,.2f".format(monthTotal), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                                Text("${monthPurchases.size} purchases this month", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .8f))
                             }
                         }
                     }
@@ -297,29 +303,29 @@ private fun LedgerLineApp(dao: LedgerDao) {
                         }
                         if (message.isNotBlank()) Text(message)
                     }
-                    if (categoryTotals.isNotEmpty()) {
+                    if (monthCategories.isNotEmpty()) {
                         item { Text("Spending by category", style = MaterialTheme.typography.titleLarge) }
-                        items(categoryTotals) { entry ->
+                        items(monthCategories) { entry ->
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(entry.category)
                                 Text("$" + "%.2f".format(entry.total))
                             }
                         }
                     }
-                    item { Text("Recent purchases", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) }
-                    if (purchases.isEmpty()) {
+                    item { Text("Purchases this month", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) }
+                    if (monthPurchases.isEmpty()) {
                         item {
                             Card {
                                 Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Default.ReceiptLong, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                                     Spacer(Modifier.height(8.dp))
-                                    Text("Your ledger starts here", fontWeight = FontWeight.SemiBold)
+                                    Text("No purchases this month", fontWeight = FontWeight.SemiBold)
                                     Text("Add a purchase and split its receipt into as many categories as you need.", style = MaterialTheme.typography.bodyMedium)
                                 }
                             }
                         }
                     } else {
-                        items(purchases, key = { it.id }) { purchase ->
+                        items(monthPurchases, key = { it.id }) { purchase ->
                             Card {
                                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
                                     Text(purchase.retailer.ifBlank { "Purchase" }, fontWeight = FontWeight.SemiBold)
@@ -395,6 +401,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                 val monthTotals = remember(purchases, spendingByPurchase) {
                     purchases.groupBy { it.date.take(7) }.mapValues { (_, ps) -> ps.sumOf { spendingByPurchase[it.id] ?: 0.0 } }.toSortedMap()
                 }
+                val yearTotals = purchases.mapNotNull { p -> runCatching { LocalDate.parse(p.date).year }.getOrNull()?.let { it to (spendingByPurchase[p.id] ?: 0.0) } }.groupBy({ it.first }, { it.second }).mapValues { (_, amounts) -> amounts.sum() }.toMutableMap().apply { putIfAbsent(LocalDate.now().year, 0.0) }.toSortedMap(reverseOrder())
                 val month = YearMonth.now().toString()
                 val monthSpent = purchases.filter { it.date.startsWith(month) }.sumOf { spendingByPurchase[it.id] ?: 0.0 }
                 LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -407,6 +414,13 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                 Text("$" + "%,.2f".format(monthSpent), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                                 Text("All-time: $" + "%,.2f".format(total))
                             }
+                        }
+                    }
+                    item { Text("Yearly spending", style = MaterialTheme.typography.titleLarge) }
+                    items(yearTotals.toList()) { (year, amount) ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(year.toString())
+                            Text("$" + "%,.2f".format(amount), fontWeight = FontWeight.SemiBold)
                         }
                     }
                     item { Text("Monthly spending", style = MaterialTheme.typography.titleLarge) }
