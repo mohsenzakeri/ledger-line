@@ -1,6 +1,11 @@
 package com.mohsenzakeri.ledgerline
 
 import android.os.Bundle
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import java.io.File
+import java.util.UUID
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -124,6 +129,8 @@ private fun LedgerLineApp(dao: LedgerDao) {
     var showDatePicker by remember { mutableStateOf(false) }
     var retailer by remember { mutableStateOf("") }
     var receiptTotal by remember { mutableStateOf("") }
+    var receiptPhoto by remember { mutableStateOf<String?>(null) }
+    var viewingPhoto by remember { mutableStateOf<String?>(null) }
     var lines by remember { mutableStateOf(listOf(DraftLine())) }
     var message by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -142,6 +149,29 @@ private fun LedgerLineApp(dao: LedgerDao) {
         if (earlier.all { it != null }) receiptAmount.subtract(earlier.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add)).setScale(2, RoundingMode.HALF_UP) else null
     } else null
     val spendingByPurchase = remember(allEntries) { allEntries.groupBy { it.purchaseId }.mapValues { (_, entries) -> entries.sumOf { it.amount } } }
+    val chooseReceiptPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                receiptPhoto = withContext(Dispatchers.IO) {
+                    val dir = File(context.filesDir, "receipts").apply { mkdirs() }
+                    val file = File(dir, UUID.randomUUID().toString() + ".jpg")
+                    try {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        context.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
+                        require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Invalid image" }
+                        var sample = 1
+                        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 2400) sample *= 2
+                        val bitmap = context.contentResolver.openInputStream(uri)!!.use {
+                            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                        } ?: error("Unable to read image")
+                        file.outputStream().use { check(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it)) }
+                        bitmap.recycle()
+                        file.name
+                    } catch (e: Exception) { file.delete(); throw e }
+                }
+            } catch (e: Exception) { message = "Receipt photo failed: " + e.message }
+        }
+    }
     val importCsv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -178,6 +208,16 @@ private fun LedgerLineApp(dao: LedgerDao) {
         }
     }
 
+    if (viewingPhoto != null) {
+        val photo = viewingPhoto!!
+        val bitmap = remember(photo) {
+            BitmapFactory.decodeFile(File(File(context.filesDir, "receipts"), photo).absolutePath)
+        }
+        AlertDialog(onDismissRequest = { viewingPhoto = null },
+            title = { Text("Receipt photo") },
+            text = { if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Receipt photo", modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) else Text("Photo unavailable") },
+            confirmButton = { TextButton(onClick = { viewingPhoto = null }) { Text("Close") } })
+    }
     if (showDatePicker) {
         val initialDate = runCatching { LocalDate.parse(date) }.getOrDefault(LocalDate.now())
         val pickerState = rememberDatePickerState(
@@ -222,7 +262,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                 )
             },
             floatingActionButton = {
-                FloatingActionButton(onClick = { editingId = null; date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); screen = "add" }) {
+                FloatingActionButton(onClick = { editingId = null; date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; receiptPhoto = null; lines = listOf(DraftLine()); screen = "add" }) {
                     Icon(Icons.Default.Add, contentDescription = "Add purchase")
                 }
             },
@@ -230,7 +270,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                 NavigationBar {
                     NavigationBarItem(selected = screen == "home", onClick = { screen = "home" }, icon = { Icon(Icons.Default.ReceiptLong, null) }, label = { Text("Home") })
                     NavigationBarItem(selected = screen == "history", onClick = { screen = "history" }, icon = { Icon(Icons.Default.History, null) }, label = { Text("History") })
-                    NavigationBarItem(selected = screen == "add", onClick = { editingId = null; date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); screen = "add" }, icon = { Icon(Icons.Default.Add, null) }, label = { Text("Add") })
+                    NavigationBarItem(selected = screen == "add", onClick = { editingId = null; date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; receiptPhoto = null; lines = listOf(DraftLine()); screen = "add" }, icon = { Icon(Icons.Default.Add, null) }, label = { Text("Add") })
                     NavigationBarItem(selected = screen == "analytics", onClick = { screen = "analytics" }, icon = { Icon(Icons.Default.Analytics, null) }, label = { Text("Analytics") })
                     NavigationBarItem(selected = screen == "settings", onClick = { screen = "settings" }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
                 }
@@ -284,6 +324,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
                                     Text(purchase.retailer.ifBlank { "Purchase" }, fontWeight = FontWeight.SemiBold)
                                     Text(purchase.date, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    purchase.receiptPhoto?.let { photo -> TextButton(onClick = { viewingPhoto = photo }) { Text("View receipt") } }
                                     if (purchase.receiptTotal != null) Text("$" + "%.2f".format(purchase.receiptTotal), style = MaterialTheme.typography.titleMedium)
                                     Row {
                                         TextButton(onClick = {
@@ -293,6 +334,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                                 date = purchase.date
                                                 retailer = purchase.retailer
                                                 receiptTotal = purchase.receiptTotal?.toString() ?: ""
+                                                receiptPhoto = purchase.receiptPhoto
                                                 lines = entries.map { DraftLine(it.amount.toString(), it.category, it.secondaryCategory,
                                                     it.necessity ?: 3, it.details, it.moreInformation, it.paymentMethod) }.ifEmpty { listOf(DraftLine()) }
                                                 screen = "add"
@@ -330,12 +372,14 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     Text("$" + "%,.2f".format(spendingByPurchase[p.id] ?: 0.0))
                                 }
                                 Text(p.date, style = MaterialTheme.typography.labelMedium)
+                                p.receiptPhoto?.let { photo -> TextButton(onClick = { viewingPhoto = photo }) { Text("View receipt") } }
                                 Row {
                                     TextButton(onClick = {
                                         scope.launch {
                                             val entries = dao.getEntries(p.id)
                                             editingId = p.id; date = p.date; retailer = p.retailer
                                             receiptTotal = p.receiptTotal?.toString() ?: ""
+                                            receiptPhoto = p.receiptPhoto
                                             lines = entries.map { DraftLine(it.amount.toString(), it.category, it.secondaryCategory, it.necessity ?: 3, it.details, it.moreInformation, it.paymentMethod) }.ifEmpty { listOf(DraftLine()) }
                                             screen = "add"
                                         }
@@ -438,6 +482,14 @@ private fun LedgerLineApp(dao: LedgerDao) {
                             }
                         }
                         OutlinedTextField(value = receiptTotal, onValueChange = { receiptTotal = it }, label = { Text("Receipt total (required)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
+                        Text("Receipt photo (optional)", style = MaterialTheme.typography.titleSmall)
+                        OutlinedButton(onClick = { chooseReceiptPhoto.launch("image/*") }) { Text(if (receiptPhoto == null) "Attach receipt picture" else "Replace receipt picture") }
+                        receiptPhoto?.let { photo ->
+                            Row {
+                                TextButton(onClick = { viewingPhoto = photo }) { Text("View receipt") }
+                                TextButton(onClick = { receiptPhoto = null }) { Text("Remove") }
+                            }
+                        }
                         if (receiptTotal.isNotBlank()) Text("Total: " + (receiptAmount?.let { "$" + AmountMath.display(it) } ?: "Invalid expression"))
                     }
                     items(lines.size) { index ->
@@ -519,13 +571,13 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                 } else {
                                     scope.launch {
                                       try {
-                                        val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()))
+                                        val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble(), receiptPhoto = receiptPhoto))
                                         val prior = if (editingId != null) dao.getEntries(id) else emptyList()
                                         val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == 0) computedFirstAmount!! else lineAmounts[index - 1]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "", paymentMethod = line.paymentMethod.trim()) }
-                                        if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()), entries)
+                                        if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble(), receiptPhoto = receiptPhoto), entries)
                                         else dao.insertEntries(entries)
                                         editingId = null
-                                        date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; lines = listOf(DraftLine()); message = "Purchase saved."; screen = "home"
+                                        date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; receiptPhoto = null; lines = listOf(DraftLine()); message = "Purchase saved."; screen = "home"
                                       } catch (e: Exception) { message = "Save failed: " + (e.message ?: "Unknown error") }
                                     }
                                 }
