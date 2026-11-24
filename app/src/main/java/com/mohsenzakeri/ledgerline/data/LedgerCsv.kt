@@ -3,7 +3,7 @@ package com.mohsenzakeri.ledgerline.data
 import java.io.Reader
 
 object LedgerCsv {
-    val headers = listOf("Date", "Amount", "Person", "Category", "Secondary-Category", "Necessity", "Retailer", "Details", "More Information")
+    val headers = listOf("Date", "Amount", "Payment Method", "Category", "Secondary-Category", "Necessity", "Retailer", "Details", "More Information")
 
     fun encode(rows: List<List<String>>): String = buildString {
         appendLine(headers.joinToString(","))
@@ -49,9 +49,9 @@ object LedgerCsv {
         val rows = parse(reader)
         if (rows.isEmpty()) return emptyList()
         val header = rows.first().map { it.trim() }
-        require(headers.all { it in header }) { "CSV must contain the nine LedgerLine spreadsheet columns" }
+        require(headers.filter { it != "Payment Method" }.all { it in header }) { "CSV must contain the nine LedgerLine spreadsheet columns" }
         return rows.drop(1).map { row ->
-            headers.associateWith { key -> row.getOrElse(header.indexOf(key)) { "" } }
+            (headers + "Person").associateWith { key -> row.getOrElse(header.indexOf(key)) { "" } }
         }
     }
 }
