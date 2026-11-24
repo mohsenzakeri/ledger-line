@@ -32,7 +32,8 @@ data class ExpenseEntryEntity(
     val details: String = "",
     val moreInformation: String = "",
     // Kept for importing and exporting legacy CSV rows; not shown in new-entry UI.
-    val legacyPerson: String = ""
+    val legacyPerson: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "''") val paymentMethod: String = ""
 )
 
 data class CategoryTotal(val category: String, val total: Double)
@@ -54,7 +55,7 @@ interface LedgerDao {
                 category = row.getValue("Category"), secondaryCategory = row.getValue("Secondary-Category"),
                 necessity = row.getValue("Necessity").trim().toIntOrNull(),
                 details = row.getValue("Details"), moreInformation = row.getValue("More Information"),
-                legacyPerson = row.getValue("Person"))))
+                legacyPerson = row["Person"].orEmpty(), paymentMethod = row["Payment Method"].orEmpty())))
         }
     }
     @Query("SELECT * FROM purchases ORDER BY date DESC, id DESC")
@@ -82,7 +83,7 @@ interface LedgerDao {
     fun observeTotalSpent(): Flow<Double>
 }
 
-@Database(entities = [PurchaseEntity::class, ExpenseEntryEntity::class], version = 1, exportSchema = false)
+@Database(entities = [PurchaseEntity::class, ExpenseEntryEntity::class], version = 2, exportSchema = false)
 abstract class LedgerDatabase : RoomDatabase() {
     abstract fun ledgerDao(): LedgerDao
 
@@ -93,7 +94,11 @@ abstract class LedgerDatabase : RoomDatabase() {
                 context.applicationContext,
                 LedgerDatabase::class.java,
                 "ledgerline.db"
-            ).build().also { INSTANCE = it }
+            ).addMigrations(object : androidx.room.migration.Migration(1, 2) {
+                override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE expense_entries ADD COLUMN paymentMethod TEXT NOT NULL DEFAULT ''")
+                }
+            }).build().also { INSTANCE = it }
         }
     }
 }
