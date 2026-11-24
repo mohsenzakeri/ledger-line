@@ -107,7 +107,8 @@ private data class DraftLine(
     val secondary: String = "",
     val necessity: Int = 3,
     val details: String = "",
-    val notes: String = ""
+    val notes: String = "",
+    val paymentMethod: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -168,7 +169,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                 val byId = dao.getAllPurchases().associateBy { it.id }
                 val rows = dao.getAllEntries().mapNotNull { e ->
                     val p = byId[e.purchaseId] ?: return@mapNotNull null
-                    listOf(p.date, e.amount.toString(), e.legacyPerson, e.category, e.secondaryCategory,
+                    listOf(p.date, e.amount.toString(), e.paymentMethod, e.category, e.secondaryCategory,
                         e.necessity?.toString() ?: "", p.retailer, e.details, e.moreInformation)
                 }
                 context.contentResolver.openOutputStream(uri)!!.bufferedWriter().use { it.write(LedgerCsv.encode(rows)) }
@@ -293,7 +294,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                                 retailer = purchase.retailer
                                                 receiptTotal = purchase.receiptTotal?.toString() ?: ""
                                                 lines = entries.map { DraftLine(it.amount.toString(), it.category, it.secondaryCategory,
-                                                    it.necessity ?: 3, it.details, it.moreInformation) }.ifEmpty { listOf(DraftLine()) }
+                                                    it.necessity ?: 3, it.details, it.moreInformation, it.paymentMethod) }.ifEmpty { listOf(DraftLine()) }
                                                 screen = "add"
                                             }
                                         }) { Text("Edit") }
@@ -335,7 +336,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                             val entries = dao.getEntries(p.id)
                                             editingId = p.id; date = p.date; retailer = p.retailer
                                             receiptTotal = p.receiptTotal?.toString() ?: ""
-                                            lines = entries.map { DraftLine(it.amount.toString(), it.category, it.secondaryCategory, it.necessity ?: 3, it.details, it.moreInformation) }.ifEmpty { listOf(DraftLine()) }
+                                            lines = entries.map { DraftLine(it.amount.toString(), it.category, it.secondaryCategory, it.necessity ?: 3, it.details, it.moreInformation, it.paymentMethod) }.ifEmpty { listOf(DraftLine()) }
                                             screen = "add"
                                         }
                                     }) { Text("Edit") }
@@ -485,6 +486,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     }
                                 }
                                 OutlinedTextField(value = lines[index].details, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(details = v.replaceFirstChar { ch -> ch.titlecase() }) } }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), minLines = 2)
+                                OutlinedTextField(value = lines[index].paymentMethod, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(paymentMethod = v) } }, label = { Text("Payment method (optional)") }, placeholder = { Text("Credit card, cash, debit card…") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                                 OutlinedTextField(value = lines[index].notes, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(notes = v) } }, label = { Text("More information") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                                 if (lines.size > 1) TextButton(onClick = { lines = lines.toMutableList().also { it.removeAt(index) } }) { Text("Remove this line") }
                             }
@@ -519,7 +521,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                       try {
                                         val id = editingId ?: dao.insertPurchase(PurchaseEntity(date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()))
                                         val prior = if (editingId != null) dao.getEntries(id) else emptyList()
-                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == 0) computedFirstAmount!! else lineAmounts[index - 1]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "") }
+                                        val entries = lines.mapIndexed { index, line -> ExpenseEntryEntity(purchaseId = id, amount = (if (index == 0) computedFirstAmount!! else lineAmounts[index - 1]!!).toDouble(), category = line.category.trim(), secondaryCategory = line.secondary.trim(), necessity = line.necessity, details = line.details, moreInformation = line.notes, legacyPerson = prior.getOrNull(index)?.legacyPerson ?: "", paymentMethod = line.paymentMethod.trim()) }
                                         if (editingId != null) dao.replacePurchase(PurchaseEntity(id = id, date = date, retailer = retailer, receiptTotal = receiptAmount!!.toDouble()), entries)
                                         else dao.insertEntries(entries)
                                         editingId = null
