@@ -149,6 +149,14 @@ private fun LedgerLineApp(dao: LedgerDao) {
         if (earlier.all { it != null }) receiptAmount.subtract(earlier.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add)).setScale(2, RoundingMode.HALF_UP) else null
     } else null
     val spendingByPurchase = remember(allEntries) { allEntries.groupBy { it.purchaseId }.mapValues { (_, entries) -> entries.sumOf { it.amount } } }
+    var pendingCameraPhoto by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val takeReceiptPhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        pendingCameraPhoto?.let { name ->
+            val file = File(File(context.filesDir, "receipts"), name)
+            if (success && file.length() > 0) receiptPhoto = name else file.delete()
+        }
+        pendingCameraPhoto = null
+    }
     val chooseReceiptPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -487,16 +495,28 @@ private fun LedgerLineApp(dao: LedgerDao) {
                     item { Text(if (editingId == null) "New purchase" else "Edit purchase", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
                     item {
                         OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Date: " + date + " · Choose from calendar") }
-                        OutlinedTextField(value = retailer, onValueChange = { retailer = it }, label = { Text("Retailer") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        OutlinedTextField(value = retailer, onValueChange = { retailer = it.replaceFirstChar { ch -> ch.titlecase() } }, label = { Text("Retailer") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), singleLine = true)
                         val retailerSuggestions = purchases.map { it.retailer.trim() }.filter { it.isNotBlank() && it.contains(retailer, ignoreCase = true) && it != retailer }.distinct().take(4)
                         if (retailer.isNotBlank() && retailerSuggestions.isNotEmpty()) {
                             Text("Previously used retailers", style = MaterialTheme.typography.labelSmall)
                             retailerSuggestions.forEach { suggestion ->
-                                TextButton(onClick = { retailer = suggestion }) { Text(suggestion) }
+                                TextButton(onClick = { retailer = suggestion.replaceFirstChar { ch -> ch.titlecase() } }) { Text(suggestion) }
                             }
                         }
                         OutlinedTextField(value = receiptTotal, onValueChange = { receiptTotal = it }, label = { Text("Receipt total (required)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
                         Text("Receipt photo (optional)", style = MaterialTheme.typography.titleSmall)
+                        OutlinedButton(onClick = {
+                            try {
+                                val dir = File(context.filesDir, "receipts").apply { mkdirs() }
+                                val file = File(dir, UUID.randomUUID().toString() + ".jpg")
+                                pendingCameraPhoto = file.name
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".receiptfiles", file)
+                                takeReceiptPhoto.launch(uri)
+                            } catch (e: Exception) {
+                                pendingCameraPhoto = null
+                                message = "Could not open camera: " + e.message
+                            }
+                        }) { Text("Take receipt photo") }
                         OutlinedButton(onClick = { chooseReceiptPhoto.launch("image/*") }) { Text(if (receiptPhoto == null) "Attach receipt picture" else "Replace receipt picture") }
                         receiptPhoto?.let { photo ->
                             Row {
