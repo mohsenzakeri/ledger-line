@@ -143,6 +143,38 @@ private fun LedgerLineApp(dao: LedgerDao) {
     val total by dao.observeTotalSpent().collectAsStateWithLifecycle(0.0)
     val categoryTotals by dao.observeCategoryTotals().collectAsStateWithLifecycle(emptyList())
     val allEntries by dao.observeAllEntries().collectAsStateWithLifecycle(emptyList())
+    var customMethods by remember { mutableStateOf(preferences.getStringSet("payment_methods", emptySet())!!.toSet()) }
+    var hiddenMethods by remember { mutableStateOf(preferences.getStringSet("hidden_payment_methods", emptySet())!!.toSet()) }
+    val paymentMethods = (allEntries.map { it.paymentMethod.trim() } + customMethods)
+        .filter { it.isNotBlank() && it.lowercase() !in hiddenMethods }
+        .distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
+    fun addPaymentMethod(value: String) {
+        val cleaned = value.trim()
+        if (cleaned.isNotBlank()) {
+            customMethods = customMethods + cleaned
+            hiddenMethods = hiddenMethods - cleaned.lowercase()
+            preferences.edit().putStringSet("payment_methods", customMethods).putStringSet("hidden_payment_methods", hiddenMethods).apply()
+        }
+    }
+    fun removePaymentMethod(value: String) {
+        customMethods = customMethods.filterNot { it.equals(value, true) }.toSet()
+        hiddenMethods = hiddenMethods + value.lowercase()
+        preferences.edit().putStringSet("payment_methods", customMethods).putStringSet("hidden_payment_methods", hiddenMethods).apply()
+    }
+    var methodEditor by remember { mutableStateOf<String?>(null) }
+    var methodName by remember { mutableStateOf("") }
+    if (methodEditor != null) {
+        AlertDialog(onDismissRequest = { methodEditor = null },
+            title = { Text(if (methodEditor == "") "Add payment method" else "Rename payment method") },
+            text = { OutlinedTextField(value = methodName, onValueChange = { methodName = it }, label = { Text("Name") }, singleLine = true) },
+            confirmButton = { TextButton(enabled = methodName.isNotBlank(), onClick = {
+                val old = methodEditor.orEmpty()
+                if (old.isNotBlank() && !old.equals(methodName.trim(), true)) removePaymentMethod(old)
+                addPaymentMethod(methodName)
+                methodEditor = null
+            }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { methodEditor = null }) { Text("Cancel") } })
+    }
     val receiptAmount = AmountMath.evaluate(receiptTotal)
     val computedFirstAmount = if (receiptAmount != null && lines.isNotEmpty()) {
         val earlier = lines.drop(1).map { AmountMath.evaluate(it.amount) }
@@ -481,6 +513,22 @@ private fun LedgerLineApp(dao: LedgerDao) {
                     item {
                         Card {
                             Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                                Text("Payment methods", style = MaterialTheme.typography.titleMedium)
+                                Text("Manage choices for new expenses. Changes do not alter past transactions.")
+                                paymentMethods.forEach { method ->
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(method, modifier = Modifier.weight(1f))
+                                        TextButton(onClick = { methodEditor = method; methodName = method }) { Text("Rename") }
+                                        TextButton(onClick = { removePaymentMethod(method) }) { Text("Remove") }
+                                    }
+                                }
+                                TextButton(onClick = { methodEditor = ""; methodName = "" }) { Text("+ Add payment method") }
+                            }
+                        }
+                    }
+                    item {
+                        Card {
+                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
                                 Text("Cloud backup & sync", style = MaterialTheme.typography.titleMedium)
                                 Text("Not connected yet. Your transactions are not uploaded to a cloud account.")
                             }
@@ -572,7 +620,16 @@ private fun LedgerLineApp(dao: LedgerDao) {
                                     }
                                 }
                                 OutlinedTextField(value = lines[index].details, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(details = v.replaceFirstChar { ch -> ch.titlecase() }) } }, label = { Text("Details") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), minLines = 2)
-                                OutlinedTextField(value = lines[index].paymentMethod, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(paymentMethod = v) } }, label = { Text("Payment method (optional)") }, placeholder = { Text("Credit card, cash, debit card…") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                                CategoryDropdown(
+                                    label = "Payment method (optional)",
+                                    value = lines[index].paymentMethod,
+                                    options = (paymentMethods + lines[index].paymentMethod).filter { it.isNotBlank() }.distinctBy { it.lowercase() },
+                                    onSelect = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(paymentMethod = v) } },
+                                    onAdd = { v -> addPaymentMethod(v); lines = lines.toMutableList().also { it[index] = it[index].copy(paymentMethod = v) } }
+                                )
+                                if (lines[index].paymentMethod.isNotBlank()) {
+                                    TextButton(onClick = { lines = lines.toMutableList().also { it[index] = it[index].copy(paymentMethod = "") } }) { Text("Clear payment method") }
+                                }
                                 OutlinedTextField(value = lines[index].notes, onValueChange = { v -> lines = lines.toMutableList().also { it[index] = it[index].copy(notes = v) } }, label = { Text("More information") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                                 if (lines.size > 1) TextButton(onClick = { lines = lines.toMutableList().also { it.removeAt(index) } }) { Text("Remove this line") }
                             }
