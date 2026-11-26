@@ -219,14 +219,14 @@ private fun LedgerLineApp(dao: LedgerDao) {
                     context.contentResolver.openInputStream(uri)!!.bufferedReader().use { LedgerCsv.readRows(it) }
                 }
                 val validated = parsed.mapIndexed { index, row ->
-                    val amount = row.getValue("Amount").trim().replace(",", "").toDoubleOrNull()
+                    val amount = LedgerCsv.parseAmount(row.getValue("Amount"))
                         ?: error("Invalid amount on CSV row " + (index + 2))
                     require(amount > 0 && amount.isFinite()) { "Invalid amount on CSV row " + (index + 2) }
-                    require(row.getValue("Date").isNotBlank()) { "Missing date on CSV row " + (index + 2) }
+                    val normalizedDate = runCatching { LedgerCsv.normalizeDate(row.getValue("Date")) }.getOrElse { error("Invalid date on CSV row " + (index + 2)) }
                     require(row.getValue("Category").isNotBlank()) { "Missing category on CSV row " + (index + 2) }
                     val necessityText = row.getValue("Necessity").trim()
                     require(necessityText.isBlank() || necessityText.toIntOrNull() in 1..5) { "Invalid necessity on CSV row " + (index + 2) }
-                    row to amount
+                    (row + ("Date" to normalizedDate)) to amount
                 }
                 withContext(Dispatchers.IO) { dao.importCsvRows(validated) }
                 message = "Imported " + validated.size + " rows"
