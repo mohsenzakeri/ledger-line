@@ -1,9 +1,26 @@
 package com.mohsenzakeri.ledgerline.data
 
 import java.io.Reader
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
+import java.util.Locale
 
 object LedgerCsv {
     val headers = listOf("Date", "Amount", "Payment Method", "Category", "Secondary-Category", "Necessity", "Retailer", "Details", "More Information")
+
+    fun normalizeDate(value: String): String {
+        val input = value.trim()
+        val us = DateTimeFormatter.ofPattern("M/d/uuuu", Locale.US).withResolverStyle(ResolverStyle.STRICT)
+        return (runCatching { LocalDate.parse(input) }.getOrNull()
+            ?: LocalDate.parse(input, us)).toString()
+    }
+
+    fun parseAmount(value: String): Double? {
+        val input = value.trim().removePrefix("$").trim()
+        if (!Regex("""(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?""").matches(input)) return null
+        return input.replace(",", "").toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    }
 
     fun encode(rows: List<List<String>>): String = buildString {
         appendLine(headers.joinToString(","))
@@ -48,7 +65,7 @@ object LedgerCsv {
     fun readRows(reader: Reader): List<Map<String, String>> {
         val rows = parse(reader)
         if (rows.isEmpty()) return emptyList()
-        val header = rows.first().map { it.trim() }
+        val header = rows.first().map { if (it.trim().equals("Necessasity", ignoreCase = true)) "Necessity" else it.trim() }
         require(headers.filter { it != "Payment Method" }.all { it in header }) { "CSV must contain the nine LedgerLine spreadsheet columns" }
         return rows.drop(1).map { row ->
             (headers + "Person").associateWith { key -> row.getOrElse(header.indexOf(key)) { "" } }
