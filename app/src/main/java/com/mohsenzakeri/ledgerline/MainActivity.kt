@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,25 +67,34 @@ private fun CategoryDropdown(
     var showAddDialog by remember { mutableStateOf(false) }
     var newCategory by remember { mutableStateOf("") }
 
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { next -> expanded = next; if (next) query = "" }) {
+    Column {
         OutlinedTextField(
             value = if (expanded) query else value,
             onValueChange = { query = it; expanded = true },
             placeholder = { Text("Search " + label) },
             label = { Text(label) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.fillMaxWidth().menuAnchor()
+            singleLine = true,
+            trailingIcon = {
+                TextButton(onClick = { expanded = !expanded; query = "" }) {
+                    Text(if (expanded) "Close" else "Choose")
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
         )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.filter { it.contains(query, ignoreCase = true) }.forEach { option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false; query = "" })
+        if (expanded) {
+            val matches = options.filter { it.contains(query, ignoreCase = true) }
+            Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+                if (matches.isEmpty()) Text("No matching options", modifier = Modifier.padding(12.dp))
+                matches.forEach { option ->
+                    DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false; query = "" })
+                }
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("+ Add new…") }, onClick = {
+                    newCategory = query
+                    expanded = false
+                    showAddDialog = true
+                })
             }
-            HorizontalDivider()
-            DropdownMenuItem(text = { Text("+ Add new…") }, onClick = {
-                expanded = false
-                newCategory = ""
-                showAddDialog = true
-            })
         }
     }
 
@@ -120,6 +131,7 @@ private data class DraftLine(
 @Composable
 private fun LedgerLineApp(dao: LedgerDao) {
     var screen by remember { mutableStateOf("home") }
+    var historyMonth by remember { mutableStateOf<String?>(null) }
     var editingId by remember { mutableStateOf<Long?>(null) }
     var deleteId by remember { mutableStateOf<Long?>(null) }
     var search by remember { mutableStateOf("") }
@@ -309,7 +321,7 @@ private fun LedgerLineApp(dao: LedgerDao) {
             bottomBar = {
                 NavigationBar {
                     NavigationBarItem(selected = screen == "home", onClick = { screen = "home" }, icon = { Icon(Icons.Default.ReceiptLong, null) }, label = { Text("Home") })
-                    NavigationBarItem(selected = screen == "history", onClick = { screen = "history" }, icon = { Icon(Icons.Default.History, null) }, label = { Text("History") })
+                    NavigationBarItem(selected = screen == "history", onClick = { historyMonth = null; screen = "history" }, icon = { Icon(Icons.Default.History, null) }, label = { Text("History") })
                     NavigationBarItem(selected = screen == "add", onClick = { editingId = null; date = LocalDate.now().toString(); retailer = ""; receiptTotal = ""; receiptPhoto = null; lines = listOf(DraftLine()); screen = "add" }, icon = { Icon(Icons.Default.Add, null) }, label = { Text("Add") })
                     NavigationBarItem(selected = screen == "analytics", onClick = { screen = "analytics" }, icon = { Icon(Icons.Default.Analytics, null) }, label = { Text("Analytics") })
                     NavigationBarItem(selected = screen == "settings", onClick = { screen = "settings" }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
@@ -410,7 +422,28 @@ private fun LedgerLineApp(dao: LedgerDao) {
                             }
                         }
                     }
-                    items(filtered, key = { it.id }) { p ->
+                    val grouped = filtered.groupBy { p ->
+                        runCatching { YearMonth.from(LocalDate.parse(p.date)).toString() }.getOrDefault("Unknown date")
+                    }.toSortedMap(reverseOrder())
+                    if (historyMonth == null) {
+                        items(grouped.toList(), key = { it.first }) { (month, monthPurchases) ->
+                            val label = runCatching { YearMonth.parse(month).format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")) }.getOrDefault(month)
+                            Card(onClick = { historyMonth = month }) {
+                                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(label, fontWeight = FontWeight.SemiBold)
+                                        Text("${monthPurchases.size} purchases", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Text("$" + "%,.2f".format(monthPurchases.sumOf { spendingByPurchase[it.id] ?: 0.0 }))
+                                }
+                            }
+                        }
+                    } else {
+                    item {
+                        TextButton(onClick = { historyMonth = null }) { Text("‹ All months") }
+                        Text(runCatching { YearMonth.parse(historyMonth!!).format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")) }.getOrDefault(historyMonth.orEmpty()), style = MaterialTheme.typography.titleLarge)
+                    }
+                    items(grouped[historyMonth].orEmpty(), key = { it.id }) { p ->
                         Card {
                             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -435,7 +468,8 @@ private fun LedgerLineApp(dao: LedgerDao) {
                             }
                         }
                     }
-                    if (filtered.isEmpty()) item { Text("No matching purchases") }
+                    }
+                    if (filtered.isEmpty() || (historyMonth != null && grouped[historyMonth].isNullOrEmpty())) item { Text("No matching purchases") }
                 }
             } else if (screen == "analytics") {
                 val monthTotals = remember(purchases, spendingByPurchase) {
